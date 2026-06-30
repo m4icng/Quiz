@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Quiz Ôn Tập Mobile Pro</title>
+    <title>Quiz Ôn Tập Mobile Pro Max</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
     <style>
         /* TỐI ƯU HÓA CHO MOBILE */
@@ -110,7 +110,9 @@
             cursor: pointer;
             font-weight: bold;
             color: #243b53;
+            margin-bottom: 12px;
         }
+        .checkbox-container:last-child { margin-bottom: 0; }
         .checkbox-container input {
             width: 20px;
             height: 20px;
@@ -183,9 +185,44 @@
         }
         #next-btn:active { transform: scale(0.98); }
 
-        /* MÀN HÌNH KẾT QUẢ */
-        #result-screen { display: none; }
+        /* MÀN HÌNH KẾT QUẢ & HIỆU ỨNG */
+        #result-screen { display: none; position: relative; }
         #score-display { font-size: 3em; color: #38c976; font-weight: bold; margin: 10px 0; }
+        
+        /* Chúc mừng Bé Iu */
+        .congrats-text {
+            display: none;
+            color: #ff4d6d;
+            font-size: 1.4em;
+            font-weight: bold;
+            margin: 15px 0;
+            animation: pulse 1.2s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.06); }
+            100% { transform: scale(1); }
+        }
+
+        /* Mưa bong bóng trái tim */
+        .heart-container {
+            position: fixed;
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            pointer-events: none;
+            z-index: 9999;
+            display: none;
+            overflow: hidden;
+        }
+        .heart-pop {
+            position: absolute;
+            bottom: -30px;
+            animation: floatUp 4s ease-out forwards;
+        }
+        @keyframes floatUp {
+            0% { transform: translateY(0) scale(0.6) rotate(0deg); opacity: 1; }
+            50% { opacity: 0.9; }
+            100% { transform: translateY(-105vh) scale(1.3) rotate(360deg); opacity: 0; }
+        }
     </style>
 </head>
 <body>
@@ -214,7 +251,6 @@
                 <label for="chunk-size">Chia số câu mỗi phần:</label>
                 <select id="chunk-size" onchange="updatePartOptions()">
                     <option value="all">Làm tất cả (Không chia)</option>
-                    <option value="10">10 câu / phần (Để thử nghiệm)</option>
                     <option value="20" selected>20 câu / phần</option>
                     <option value="50">50 câu / phần</option>
                     <option value="100">100 câu / phần</option>
@@ -227,10 +263,14 @@
                 <select id="part-select"></select>
             </div>
 
-            <div class="setting-group" style="background: transparent; border: none; padding: 0;">
+            <div class="setting-group">
                 <label class="checkbox-container">
                     <input type="checkbox" id="shuffle-check" checked>
                     Đảo ngẫu nhiên thứ tự câu hỏi
+                </label>
+                <label class="checkbox-container">
+                    <input type="checkbox" id="shuffle-options-check" checked>
+                    Đảo ngẫu nhiên vị trí đáp án (A, B, C, D)
                 </label>
             </div>
 
@@ -251,10 +291,14 @@
             <p style="color: #627d98;">Số câu trả lời đúng của bạn:</p>
             <div id="score-display">0/0</div>
             
+            <div class="congrats-text" id="congrats-text">Bé iu giỏi qué tròi! ❤️</div>
+            
             <button class="btn-primary" onclick="returnToSettings()">Làm phần khác</button>
             <button class="btn-primary btn-secondary" onclick="location.reload()">Tải file mới</button>
         </div>
     </div>
+
+    <div id="heart-container" class="heart-container"></div>
 
     <script>
         let allQuestions = []; 
@@ -291,10 +335,11 @@
             reader.readAsArrayBuffer(file);
         });
 
+        // Hàm phân tích văn bản nâng cấp cấu trúc dạng Object Array cho Options
         function parseText(text) {
             const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
             let questions = [];
-            let currentQ = { question: "", options: {}, answer: '' };
+            let currentQ = { question: "", options: [], answer: '' };
             let state = "QUESTION"; 
 
             for (let i = 0; i < lines.length; i++) {
@@ -302,10 +347,10 @@
                 let ansMatch = line.match(/^(Đáp án|Answer)[\s:]*([A-D])/i);
                 if (ansMatch) {
                     currentQ.answer = ansMatch[2].toUpperCase();
-                    if (currentQ.question && Object.keys(currentQ.options).length >= 2) {
-                        questions.push({...currentQ});
+                    if (currentQ.question && currentQ.options.length >= 2) {
+                        questions.push(JSON.parse(JSON.stringify(currentQ)));
                     }
-                    currentQ = { question: "", options: {}, answer: '' };
+                    currentQ = { question: "", options: [], answer: '' };
                     state = "QUESTION";
                     continue;
                 } 
@@ -314,7 +359,7 @@
                 if (optMatch) {
                     let letter = optMatch[1].toUpperCase();
                     state = "OPTIONS"; 
-                    currentQ.options[letter] = line;
+                    currentQ.options.push({ originalLetter: letter, text: optMatch[2] });
                     continue;
                 } 
 
@@ -322,14 +367,12 @@
                     if (currentQ.question !== "") currentQ.question += "<br>" + line; 
                     else currentQ.question = line;
                 } else if (state === "OPTIONS") {
-                    let keys = Object.keys(currentQ.options);
-                    if (keys.length > 0) {
-                        let lastKey = keys[keys.length - 1];
-                        currentQ.options[lastKey] += " " + line;
+                    if (currentQ.options.length > 0) {
+                        currentQ.options[currentQ.options.length - 1].text += " " + line;
                     }
                 }
             }
-            if (currentQ.question && Object.keys(currentQ.options).length >= 2 && currentQ.answer) {
+            if (currentQ.question && currentQ.options.length >= 2 && currentQ.answer) {
                 questions.push(currentQ);
             }
             
@@ -380,19 +423,28 @@
         function startQuiz() {
             const chunkSize = document.getElementById('chunk-size').value;
             const isShuffle = document.getElementById('shuffle-check').checked;
+            const isShuffleOptions = document.getElementById('shuffle-options-check').checked;
             
             if (chunkSize === 'all') {
-                currentQuizQuestions = [...allQuestions]; 
+                currentQuizQuestions = JSON.parse(JSON.stringify(allQuestions)); 
             } else {
                 const size = parseInt(chunkSize);
                 const part = parseInt(document.getElementById('part-select').value);
                 const startIndex = (part - 1) * size;
                 const endIndex = startIndex + size;
-                currentQuizQuestions = allQuestions.slice(startIndex, endIndex);
+                currentQuizQuestions = JSON.parse(JSON.stringify(allQuestions.slice(startIndex, endIndex)));
             }
 
+            // Đảo câu hỏi
             if (isShuffle) {
                 shuffleArray(currentQuizQuestions);
+            }
+
+            // Đảo đáp án bên trong từng câu hỏi
+            if (isShuffleOptions) {
+                currentQuizQuestions.forEach(q => {
+                    shuffleArray(q.options);
+                });
             }
 
             currentIndex = 0;
@@ -414,28 +466,37 @@
             container.classList.remove('disabled-options');
             document.getElementById('next-btn').style.display = 'none';
 
-            for (const [letter, text] of Object.entries(q.options)) {
+            const displayLetters = ['A', 'B', 'C', 'D'];
+            q.options.forEach((opt, optIdx) => {
                 const optDiv = document.createElement('div');
                 optDiv.className = 'option';
-                optDiv.textContent = text;
-                optDiv.dataset.letter = letter;
                 
-                optDiv.onclick = function() { checkAnswer(optDiv, letter, q.answer, container); };
+                // Giữ định dạng ABCD tuần tự cố định ra màn hình ngoài
+                const currentLetter = displayLetters[optIdx] || '';
+                optDiv.textContent = `${currentLetter}. ${opt.text}`;
+                
+                // Lưu ID gốc của câu trả lời để đối chiếu lúc chấm điểm
+                optDiv.dataset.originalLetter = opt.originalLetter;
+                
+                optDiv.onclick = function() { 
+                    checkAnswer(optDiv, opt.originalLetter, q.answer, container); 
+                };
                 container.appendChild(optDiv);
-            }
+            });
         }
 
-        function checkAnswer(selectedEl, selectedLetter, correctLetter, containerEl) {
+        function checkAnswer(selectedEl, selectedOriginalLetter, correctOriginalLetter, containerEl) {
             containerEl.classList.add('disabled-options');
             const allOptions = containerEl.getElementsByClassName('option');
 
-            if (selectedLetter === correctLetter) {
+            if (selectedOriginalLetter === correctOriginalLetter) {
                 selectedEl.classList.add('correct');
                 correctAnswersCount++;
             } else {
                 selectedEl.classList.add('incorrect');
+                // Quét tìm xem đáp án đúng đang nằm ở nhãn chữ cái nào mới để tô xanh lá
                 for (let opt of allOptions) {
-                    if (opt.dataset.letter === correctLetter) {
+                    if (opt.dataset.originalLetter === correctOriginalLetter) {
                         opt.classList.add('correct');
                         break;
                     }
@@ -457,6 +518,49 @@
             document.getElementById('quiz-screen').style.display = 'none';
             document.getElementById('result-screen').style.display = 'block';
             document.getElementById('score-display').textContent = `${correctAnswersCount} / ${currentQuizQuestions.length}`;
+            
+            // Tính toán phần trăm chính xác
+            const percentage = (correctAnswersCount / currentQuizQuestions.length) * 100;
+            const congratsText = document.getElementById('congrats-text');
+            
+            if (percentage >= 90) {
+                congratsText.style.display = 'block';
+                startHeartAnimation();
+            } else {
+                congratsText.style.display = 'none';
+            }
+        }
+
+        // Hàm khởi tạo mưa trái tim
+        function startHeartAnimation() {
+            const container = document.getElementById('heart-container');
+            container.style.display = 'block';
+            container.innerHTML = ''; // dọn tim cũ nếu có
+            
+            const heartIcons = ['❤️', '💖', '💝', '💕', '💗'];
+            
+            // Tạo ra 40 trái tim bay ngẫu nhiên lên trên
+            for (let i = 0; i < 40; i++) {
+                const heart = document.createElement('div');
+                heart.className = 'heart-pop';
+                heart.innerHTML = heartIcons[Math.floor(Math.random() * heartIcons.length)];
+                
+                // Tọa độ X ngẫu nhiên theo chiều rộng màn hình mobile (0% -> 100%)
+                heart.style.left = Math.random() * 100 + 'vw';
+                // Thời gian delay xuất hiện rải rác từ 0 đến 2.5 giây
+                heart.style.animationDelay = Math.random() * 2.5 + 's';
+                // Kích thước tim to nhỏ khác nhau
+                heart.style.fontSize = (Math.random() * 20 + 16) + 'px';
+                // Thời gian bay nhanh chậm khác nhau (từ 3s đến 5s)
+                heart.style.animationDuration = (Math.random() * 2 + 3) + 's';
+                
+                container.appendChild(heart);
+            }
+            
+            // Tự động thu dọn và ẩn container sau khi bay hết (6 giây)
+            setTimeout(() => {
+                container.style.display = 'none';
+            }, 6000);
         }
 
         function returnToSettings() {
